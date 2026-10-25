@@ -1,0 +1,4 @@
+# Dependencias SOLO para AWS Lambda.
+# pandas/numpy NO van aquí: los aporta la capa administrada AWSSDKPandas-Python313.
+fastapi
+mangum

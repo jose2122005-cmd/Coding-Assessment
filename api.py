@@ -8,12 +8,8 @@ Endpoints:
   GET /trends        Crash trends over time
   GET /crashes       Crash records for maps
 
-Common filters:
-county, year, severity, road_class
-
-Run:
-  py -m uvicorn api:app --reload
-  http://127.0.0.1:8000/docs
+Run: py -m uvicorn api:app --reload
+http://127.0.0.1:8000/docs
 """
 
 from typing import Literal, Optional
@@ -44,7 +40,7 @@ VALID_ROAD_CLASSES = sorted(DATA["road_class"].dropna().unique())
 
 
 class Filters:
-    """Common filters used by the API."""
+    # Common filters used by the API
 
     def __init__(
         self,
@@ -73,12 +69,12 @@ class Filters:
         self.road_class = road_class
 
     def as_dict(self) -> dict:
-        """Return the filters that were used."""
+        # Return the filters that were used
         return {k: v for k, v in vars(self).items() if v is not None}
 
 
 def filtered_data(f: Filters = Depends()) -> pd.DataFrame:
-    """Check the filters and return the matching data."""
+    # Check the filters and return the matching data
     if f.severity and f.severity.strip().upper() not in SEVERITY_ORDER:
         raise HTTPException(422, f"severity must be one of {SEVERITY_ORDER}")
 
@@ -102,7 +98,7 @@ def filtered_data(f: Filters = Depends()) -> pd.DataFrame:
 
 @app.get("/", tags=["info"])
 def index():
-    """Show the available endpoints."""
+    # Show the available endpoints
     return {
         "service": "TxDOT Crash Analytics API",
         "docs": "/docs",
@@ -119,13 +115,13 @@ def index():
 
 @app.get("/health", tags=["info"])
 def health():
-    """Check if the API is running."""
+    # Check if the API is running
     return {"status": "ok", "crashes_loaded": len(DATA)}
 
 
 @app.get("/meta", tags=["info"])
 def meta():
-    """Return the available filter values."""
+    # Return the available filter values
     return {
         "total_crashes": len(DATA),
         "date_range": {
@@ -147,7 +143,7 @@ def severity(
     df: pd.DataFrame = Depends(filtered_data),
     f: Filters = Depends(),
 ):
-    """Return crashes by severity."""
+    # Return crash counts by severity
     counts = severity_counts(df)
     total = sum(counts.values())
 
@@ -177,7 +173,7 @@ def factors_top(
     df: pd.DataFrame = Depends(filtered_data),
     f: Filters = Depends(),
 ):
-    """Return the most common contributing factors."""
+    # Return the most common contributing factors
     return {
         "filters": f.as_dict(),
         "total_crashes": len(df),
@@ -194,7 +190,7 @@ def trends(
     df: pd.DataFrame = Depends(filtered_data),
     f: Filters = Depends(),
 ):
-    """Return crash counts over time."""
+    # Return crash counts over time
     series = temporal_patterns(df)[f"by_{group_by}"]
 
     return {
@@ -227,7 +223,7 @@ def crashes(
     df: pd.DataFrame = Depends(filtered_data),
     f: Filters = Depends(),
 ):
-    """Return crash records for the map."""
+    # Return crash records for the map
     if with_coords_only:
         df = df.dropna(subset=["lat", "lon"])
 

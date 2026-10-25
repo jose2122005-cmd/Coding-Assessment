@@ -1,0 +1,21 @@
+# Datos originales de TxDOT (77 MB, no se suben; el README explica cómo obtenerlos)
+district_crashes.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Secretos y credenciales: NUNCA al repositorio
+.env
+*.pem
+.aws/
+
+# Notebooks y herramientas
+.ipynb_checkpoints/
+
+# Paquetes de despliegue generados (se reconstruyen)
+build/
+*.zip
+TransTech_GA_Assessment.pdf

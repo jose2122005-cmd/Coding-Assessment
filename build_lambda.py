@@ -13,7 +13,7 @@ BUILD = ROOT / "build"
 ZIP_PATH = ROOT / "lambda_package.zip"
 
 LAMBDA_PYTHON = "3.13"
-CODE_FILES = ["api.py", "processing.py", "lambda_handler.py"]
+CODE_FILES = ["api.py", "processing.py", "lambda_handler.py", "dashboard.html"]
 
 
 def install_dependencies() -> None:
@@ -50,7 +50,7 @@ def main(skip_install: bool = False) -> None:
     if not skip_install:
         install_dependencies()
 
-    # Copy the Python files
+    # Copy the project files
     for name in CODE_FILES:
         shutil.copy(ROOT / name, BUILD / name)
 
@@ -72,7 +72,8 @@ def main(skip_install: bool = False) -> None:
 
     size_mb = ZIP_PATH.stat().st_size / 1_000_000
     print(f"Done: {ZIP_PATH.name} ({size_mb:.1f} MB)")
-    
+
+
 def remove_readonly(func, path, exc):
     if isinstance(exc, PermissionError):
         try:
@@ -83,6 +84,7 @@ def remove_readonly(func, path, exc):
             pass
 
     raise exc
+
 
 if __name__ == "__main__":
     main(skip_install="--skip-install" in sys.argv)

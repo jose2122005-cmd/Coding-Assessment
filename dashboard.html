@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lubbock District Crash Dashboard</title>
+
+    <link
+        rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
+    >
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            margin: 0;
+            background: #f4f6f8;
+            color: #1c2833;
+        }
+
+        header {
+            background: #0d47a1;
+            color: #fff;
+            padding: 14px 20px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.2rem;
+        }
+
+        header small {
+            opacity: 0.8;
+        }
+
+        .bar {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+            padding: 12px 20px;
+            background: #fff;
+            border-bottom: 1px solid #dde;
+        }
+
+        select {
+            padding: 6px;
+            font-size: 0.95rem;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 14px;
+            padding: 14px 20px;
+        }
+
+        .card {
+            background: #fff;
+            border-radius: 8px;
+            padding: 12px;
+            box-shadow: 0 1px 3px #0002;
+        }
+
+        .card h2 {
+            margin: 0 0 8px;
+            font-size: 1rem;
+        }
+
+        .chart {
+            height: 260px;
+        }
+
+        #map {
+            height: 420px;
+            border-radius: 6px;
+        }
+
+        .kpi {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #0d47a1;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>Lubbock District Crash Dashboard</h1>
+        <small>TxDOT CRIS, 2020-2026 (2026 partial)</small>
+    </header>
+
+    <div class="bar">
+        <label>
+            Year
+            <select id="year">
+                <option value="">All</option>
+            </select>
+        </label>
+
+        <label>
+            County
+            <select id="county">
+                <option value="">All</option>
+            </select>
+        </label>
+
+        <label>
+            Trend by
+            <select id="by">
+                <option>year</option>
+                <option>month</option>
+                <option>weekday</option>
+                <option>hour</option>
+            </select>
+        </label>
+
+        <span>
+            Crashes:
+            <span class="kpi" id="total">-</span>
+        </span>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <h2>Crashes by severity</h2>
+            <div class="chart">
+                <canvas id="sev"></canvas>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Crashes over time</h2>
+            <div class="chart">
+                <canvas id="tr"></canvas>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Top contributing factors</h2>
+            <div class="chart">
+                <canvas id="fac"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card" style="grid-column: 1 / -1">
+            <h2>
+                Fatal (K, dark red) and serious injury (A, orange) crashes:
+                <span id="mapn">-</span> mapped
+            </h2>
+            <div id="map"></div>
+        </div>
+    </div>
+
+    <script>
+        const $ = id => document.getElementById(id);
+
+        const COL = {
+            K: "#b71c1c",
+            A: "#ef6c00",
+            B: "#f9a825",
+            C: "#78909c"
+        };
+
+        const charts = {};
+        let map, layer;
+
+        async function get(path, extra = {}) {
+            const p = new URLSearchParams();
+
+            if ($("year").value) {
+                p.set("year", $("year").value);
+            }
+
+            if ($("county").value) {
+                p.set("county", $("county").value);
+            }
+
+            for (const k in extra) {
+                p.set(k, extra[k]);
+            }
+
+            const r = await fetch(path + "?" + p);
+
+            if (!r.ok) {
+                throw new Error(path + " returned " + r.status);
+            }
+
+            return r.json();
+        }
+
+        function draw(id, type, labels, data, color, opts = {}) {
+            if (charts[id]) {
+                charts[id].destroy();
+            }
+
+            charts[id] = new Chart($(id), {
+                type,
+                data: {
+                    labels,
+                    datasets: [{
+                        label: "Crashes",
+                        data,
+                        backgroundColor: color,
+                        borderColor: Array.isArray(color) ? color[0] : color
+                    }]
+                },
+                options: {
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    maintainAspectRatio: false,
+                    ...opts
+                }
+            });
+        }
+
+        async function drawMap() {
+            layer.clearLayers();
+
+            let n = 0;
+
+            for (const s of ["K", "A"]) {
+                let off = 0;
+                let total = 1;
+
+                // Get all matching records, 1000 at a time
+                while (off < total) {
+                    const r = await get("crashes", {
+                        severity: s,
+                        limit: 1000,
+                        offset: off,
+                        with_coords_only: true
+                    });
+
+                    total = r.total;
+
+                    r.data.forEach(c => {
+                        L.circleMarker(
+                            [c.lat, c.lon],
+                            {
+                                radius: s === "K" ? 5 : 3,
+                                color: COL[s],
+                                weight: 1,
+                                fillOpacity: 0.6
+                            }
+                        )
+                        .bindPopup(
+                            `<b>${c.date}</b> ${c.county}<br>` +
+                            `Severity ${s} | ${c.road_class || ""}<br>` +
+                            `${c.factors.join("; ")}`
+                        )
+                        .addTo(layer);
+                    });
+
+                    n += r.data.length;
+                    off += 1000;
+                }
+            }
+
+            $("mapn").textContent = n.toLocaleString();
+        }
+
+        async function refresh() {
+            const [sev, fac, tr] = await Promise.all([
+                get("severity"),
+                get("factors/top"),
+                get("trends", {
+                    group_by: $("by").value
+                })
+            ]);
+
+            $("total").textContent = sev.total.toLocaleString();
+
+            draw(
+                "sev",
+                "bar",
+                sev.data.map(d => d.label),
+                sev.data.map(d => d.crashes),
+                sev.data.map(d => COL[d.severity])
+            );
+
+            draw(
+                "tr",
+                "line",
+                tr.data.map(d => d.period),
+                tr.data.map(d => d.crashes),
+                "#1565c0"
+            );
+
+            draw(
+                "fac",
+                "bar",
+                fac.data.map(d => d.factor),
+                fac.data.map(d => d.crashes),
+                "#1565c0",
+                { indexAxis: "y" }
+            );
+
+            await drawMap();
+        }
+
+        (async () => {
+            const m = await (await fetch("meta")).json();
+
+            m.years.forEach(y => {
+                $("year").add(new Option(y, y));
+            });
+
+            m.counties.forEach(c => {
+                $("county").add(new Option(c, c));
+            });
+
+            map = L.map("map", {
+                preferCanvas: true
+            }).setView([33.6, -101.9], 8);
+
+            L.tileLayer(
+                "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                {
+                    attribution: "&copy; OpenStreetMap"
+                }
+            ).addTo(map);
+
+            layer = L.layerGroup().addTo(map);
+
+            ["year", "county", "by"].forEach(id => {
+                $(id).onchange = refresh;
+            });
+
+            refresh();
+        })();
+    </script>
+</body>
+</html>

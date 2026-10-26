@@ -13,9 +13,11 @@ http://127.0.0.1:8000/docs
 """
 
 from typing import Literal, Optional
+from pathlib import Path
 
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 
 from processing import (
     SEVERITY_LABELS,
@@ -29,24 +31,24 @@ from processing import (
 
 app = FastAPI(
     title="TxDOT Crash Analytics API",
-    description="Metrics for crashes in the Lubbock district, 2020-2026.",
+    description="Crash data for the Lubbock district, 2020-2026.",
     version="1.0.0",
 )
 
-# Load the data when the API starts
+# Load the data when the app starts
 DATA: pd.DataFrame = get_data()
 VALID_COUNTIES = sorted(DATA["county"].dropna().unique())
 VALID_ROAD_CLASSES = sorted(DATA["road_class"].dropna().unique())
 
 
 class Filters:
-    # Common filters used by the API
+    # Common filters used by the endpoints
 
     def __init__(
         self,
         county: Optional[str] = Query(
             None,
-            description="County, e.g. LUBBOCK",
+            description="County name, e.g. LUBBOCK",
         ),
         year: Optional[int] = Query(
             None,
@@ -56,7 +58,7 @@ class Filters:
         ),
         severity: Optional[str] = Query(
             None,
-            description="K, A, B or C",
+            description="K, A, B, or C",
         ),
         road_class: Optional[str] = Query(
             None,
@@ -69,59 +71,41 @@ class Filters:
         self.road_class = road_class
 
     def as_dict(self) -> dict:
-        # Return the filters that were used
+        # Return only the filters that were provided
         return {k: v for k, v in vars(self).items() if v is not None}
 
 
 def filtered_data(f: Filters = Depends()) -> pd.DataFrame:
-    # Check the filters and return the matching data
+    # Check the filters and return the matching crashes
     if f.severity and f.severity.strip().upper() not in SEVERITY_ORDER:
-        raise HTTPException(422, f"severity must be one of {SEVERITY_ORDER}")
-
+        raise HTTPException(422, f"severity debe ser uno de {SEVERITY_ORDER}")
     if f.county and f.county.strip().upper() not in VALID_COUNTIES:
-        raise HTTPException(422, f"Unknown county. Options: {VALID_COUNTIES}")
-
+        raise HTTPException(422, f"county desconocido. Opciones: {VALID_COUNTIES}")
     if f.road_class and f.road_class.strip().upper() not in VALID_ROAD_CLASSES:
-        raise HTTPException(
-            422,
-            f"Unknown road_class. Options: {VALID_ROAD_CLASSES}",
-        )
+        raise HTTPException(422, f"road_class desconocido. Opciones: {VALID_ROAD_CLASSES}")
 
-    return apply_filters(
-        DATA,
-        f.county,
-        f.year,
-        f.severity,
-        f.road_class,
-    )
+    return apply_filters(DATA, f.county, f.year, f.severity, f.road_class)
 
 
 @app.get("/", tags=["info"])
 def index():
-    # Show the available endpoints
+    # Return the available endpoints
     return {
         "service": "TxDOT Crash Analytics API",
         "docs": "/docs",
-        "endpoints": [
-            "/health",
-            "/meta",
-            "/severity",
-            "/factors/top",
-            "/trends",
-            "/crashes",
-        ],
+        "endpoints": ["/health", "/meta", "/severity", "/factors/top", "/trends", "/crashes"],
     }
 
 
 @app.get("/health", tags=["info"])
 def health():
-    # Check if the API is running
+    # Check that the API is running
     return {"status": "ok", "crashes_loaded": len(DATA)}
 
 
 @app.get("/meta", tags=["info"])
 def meta():
-    # Return the available filter values
+    # Return the available filters and date range
     return {
         "total_crashes": len(DATA),
         "date_range": {
@@ -139,11 +123,8 @@ def meta():
 
 
 @app.get("/severity", tags=["metrics"])
-def severity(
-    df: pd.DataFrame = Depends(filtered_data),
-    f: Filters = Depends(),
-):
-    # Return crash counts by severity
+def severity(df: pd.DataFrame = Depends(filtered_data), f: Filters = Depends()):
+    # Count crashes for each severity level
     counts = severity_counts(df)
     total = sum(counts.values())
 
@@ -185,12 +166,12 @@ def factors_top(
 def trends(
     group_by: Literal["year", "month", "weekday", "hour"] = Query(
         "year",
-        description="Time group",
+        description="Time period to group by",
     ),
     df: pd.DataFrame = Depends(filtered_data),
     f: Filters = Depends(),
 ):
-    # Return crash counts over time
+    # Group crashes by year, month, weekday, or hour
     series = temporal_patterns(df)[f"by_{group_by}"]
 
     return {
@@ -209,7 +190,7 @@ def crashes(
         100,
         ge=1,
         le=1000,
-        description="Records per page",
+        description="Number of records per page",
     ),
     offset: int = Query(
         0,
@@ -218,18 +199,16 @@ def crashes(
     ),
     with_coords_only: bool = Query(
         False,
-        description="Only return crashes with coordinates",
+        description="Return only crashes with valid coordinates",
     ),
     df: pd.DataFrame = Depends(filtered_data),
     f: Filters = Depends(),
 ):
-    # Return crash records for the map
+    # Return a page of crash records
     if with_coords_only:
         df = df.dropna(subset=["lat", "lon"])
 
-    page = df.sort_values(
-        ["date", "crash_id"]
-    ).iloc[offset : offset + limit]
+    page = df.sort_values(["date", "crash_id"]).iloc[offset:offset + limit]
 
     records = [
         {
@@ -238,10 +217,7 @@ def crashes(
             "hour": None if pd.isna(row.hour) else int(row.hour),
             "severity": row.severity,
             "county": row.county,
-            "road_class": (
-                None if pd.isna(row.road_class)
-                else row.road_class
-            ),
+            "road_class": None if pd.isna(row.road_class) else row.road_class,
             "lat": None if pd.isna(row.lat) else float(row.lat),
             "lon": None if pd.isna(row.lon) else float(row.lon),
             "factors": (
@@ -260,3 +236,9 @@ def crashes(
         "offset": offset,
         "data": records,
     }
+
+
+@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
+def dashboard():
+    # Return the dashboard page
+    return (Path(__file__).parent / "dashboard.html").read_text(encoding="utf-8")
